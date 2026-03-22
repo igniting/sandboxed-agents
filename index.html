@@ -63,6 +63,22 @@
 .reveal .divider-slide p { color: #888; font-size: 0.82em; }
 .reveal .progress { color: #ccc; height: 2px; }
 .reveal .slide-number { font-family: 'Inter', sans-serif; font-size: 0.42em; color: #bbb; }
+
+/* Mobile responsiveness */
+@media screen and (max-width: 768px) {
+  :root { --r-main-font-size: 28px; }
+  .reveal h1 { font-size: 1.8em; }
+  .reveal h2 { font-size: 1.3em; }
+  .reveal p, .reveal li { font-size: 0.92em; line-height: 1.6; }
+  .reveal blockquote { font-size: 0.95em; width: 95%; padding: 0.3em 0.8em; }
+  .reveal .label { font-size: 0.55em; }
+  .reveal .stat { font-size: 1.4em; }
+  .reveal table { font-size: 0.72em; }
+  .reveal .two-col { grid-template-columns: 1fr; gap: 1em; }
+  .reveal .three-col { grid-template-columns: 1fr; gap: 1em; }
+  .reveal code { font-size: 0.8em; }
+  .reveal .slide-number { font-size: 0.55em; }
+}
 </style>
 </head>
 <body>
@@ -405,6 +421,8 @@ Reveal.initialize({
   width: 1120,
   height: 700,
   margin: 0.1,
+  minScale: 0.2,
+  maxScale: 2.0,
   transition: 'fade',
   transitionSpeed: 'slow',
   center: true,
