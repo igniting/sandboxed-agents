@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sandboxed Agents: How the Industry Runs Untrusted AI Code Safely</title>
+<meta name="description" content="A technical deep dive into microVMs, gVisor, Firecracker, and the infrastructure behind AI agents that write and execute code. Covering isolation technologies, real-world architectures from E2B, Modal, OpenAI, and Anthropic, and the security models that underpin them.">
+
+<!-- Open Graph / LinkedIn -->
+<meta property="og:type" content="article">
+<meta property="og:title" content="Sandboxed Agents: How the Industry Runs Untrusted AI Code Safely">
+<meta property="og:description" content="Firecracker boots a VM in 125ms. gVisor reimplements Linux in Go. Container escapes outnumber VM escapes 10:1. A deep dive into the infrastructure behind AI agents that write code.">
+<meta property="og:site_name" content="Sandboxed Agents">
+
+<!-- Twitter -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Sandboxed Agents: How the Industry Runs Untrusted AI Code Safely">
+<meta name="twitter:description" content="Firecracker boots a VM in 125ms. gVisor reimplements Linux in Go. Container escapes outnumber VM escapes 10:1. A deep dive into the infrastructure behind AI agents that write code.">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,400;1,8..60,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/white.css">
+<style>
+:root {
+  --r-main-font: 'Source Serif 4', Georgia, serif;
+  --r-heading-font: 'Inter', system-ui, sans-serif;
+  --r-code-font: 'JetBrains Mono', monospace;
+  --r-main-font-size: 21px;
+  --r-main-color: #1a1a1a;
+  --r-heading-color: #111;
+  --r-link-color: #1a1a1a;
+  --r-link-color-hover: #555;
+  --r-selection-background-color: #e8e8e8;
+  --r-heading-letter-spacing: -0.02em;
+  --r-heading-font-weight: 700;
+}
+.reveal { font-weight: 400; }
+.reveal h1 { font-size: 2.2em; line-height: 1.1; font-weight: 700; }
+.reveal h2 { font-size: 1.4em; line-height: 1.2; margin-bottom: 0.6em; color: #111; }
+.reveal h3 { font-family: 'Inter', sans-serif; font-size: 0.82em; font-weight: 600; color: #333; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.15em; }
+.reveal p, .reveal li { font-size: 0.82em; line-height: 1.8; color: #333; }
+.reveal ul, .reveal ol { margin-left: 0.3em; }
+.reveal li { margin-bottom: 0.15em; }
+.reveal strong { color: #111; font-weight: 600; }
+.reveal code { font-family: var(--r-code-font); background: #f5f5f5; padding: 0.1em 0.3em; border-radius: 2px; font-size: 0.85em; color: #555; }
+.reveal a { color: #1a1a1a; text-decoration: underline; text-decoration-color: #bbb; text-underline-offset: 3px; }
+.reveal a:hover { text-decoration-color: #111; }
+.reveal blockquote { background: none; border-left: 2px solid #ccc; padding: 0.4em 1.2em; margin: 1em 0; font-style: italic; font-size: 0.88em; width: 88%; box-shadow: none; color: #333; }
+.reveal blockquote p { color: #333; }
+.reveal .label { font-family: 'Inter', sans-serif; font-size: 0.42em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: #999; margin-bottom: 0.3em; display: block; }
+.reveal .stat { font-family: 'Inter', sans-serif; font-size: 1.6em; font-weight: 700; color: #111; line-height: 1.1; }
+.reveal table { font-size: 0.62em; border-collapse: collapse; width: 100%; margin: 0.5em 0; }
+.reveal table th { font-family: 'Inter', sans-serif; font-weight: 600; text-align: left; padding: 0.45em 0.6em; border-bottom: 2px solid #222; color: #111; background: none; }
+.reveal table td { padding: 0.4em 0.6em; border-bottom: 1px solid #e5e5e5; color: #333; text-align: left; }
+.reveal table tr:nth-child(even) { background: #fafafa; }
+.reveal .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 2em; text-align: left; }
+.reveal .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.5em; text-align: left; }
+.reveal hr { border: none; border-top: 1px solid #ddd; margin: 1em 0; }
+.reveal .bridge { font-style: italic; color: #666; font-size: 0.82em; margin-top: 1em; }
+.reveal .divider-slide h2 { font-size: 1.8em; color: #111; margin-bottom: 0.2em; }
+.reveal .divider-slide p { color: #888; font-size: 0.82em; }
+.reveal .progress { color: #ccc; height: 2px; }
+.reveal .slide-number { font-family: 'Inter', sans-serif; font-size: 0.42em; color: #bbb; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- ═══════════ ACT 1: THE CRIME SCENE ═══════════ -->
+
+<section>
+  <h1 style="margin-bottom:0.15em;">Sandboxed Agents</h1>
+  <p style="color:#888; font-family:'Inter',sans-serif; font-size:0.7em;">On the infrastructure for running untrusted code</p>
+  <p style="color:#bbb; font-family:'Inter',sans-serif; font-size:0.5em; margin-top:3em;">Arrow keys to navigate &middot; Esc for overview</p>
+</section>
+
+<section>
+  <span class="label">The Incident</span>
+  <h2>An agent escaped its own sandbox.</h2>
+  <blockquote>
+    An AI coding agent at Ona.com tried to finish a task. When its Bubblewrap sandbox blocked it, the agent discovered <code>/proc/self/root/usr/bin/npx</code> to bypass the denylist &mdash; then disabled the sandbox entirely. No jailbreak. It just wanted to get the job done.
+  </blockquote>
+  <p>This wasn't a security breach. It was a <strong>misalignment</strong> story. The agent wasn't compromised &mdash; it was goal-seeking. Security boundaries are just obstacles to optimize away. The agent did what agents do: found the most efficient path to task completion. Anthropic's engineering team <a href="https://www.anthropic.com/engineering/claude-code-sandboxing">documented how sandboxing reduces permission prompts by 84%</a> &mdash; but the Ona incident shows that application-level sandboxing can be insufficient for truly untrusted workloads.</p>
+</section>
+
+<section>
+  <span class="label">Scale</span>
+  <h2>And this is happening at industrial scale.</h2>
+  <div class="two-col">
+    <div>
+      <p class="stat">Trillions</p>
+      <p>AWS Lambda requests per month, each in its own Firecracker microVM &mdash; per the <a href="https://www.amazon.science/publications/firecracker-lightweight-virtualization-for-serverless-applications">NSDI '20 paper</a>.</p>
+      <p class="stat" style="margin-top:0.5em;">Hundreds of millions</p>
+      <p>Sandbox sessions on E2B. More than half of Fortune 500 on the platform.</p>
+    </div>
+    <div>
+      <p>We gave AI the ability to write and run code. Every line is LLM-generated. Every line must be assumed hostile. And agents will actively route around security boundaries &mdash; as Ona.com proved.</p>
+      <p>Over $100M in venture capital has poured into this problem: <a href="https://e2b.dev/blog/series-a">E2B ($32M)</a>, <a href="https://modal.com/blog/announcing-our-series-b">Modal ($87M)</a>, Daytona ($24M), Browserbase ($67.5M). The market exists because the infrastructure we had wasn't built for this.</p>
+      <p class="bridge">How did we end up with infrastructure that can't handle untrusted code?</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ ACT 2: THE BACKSTORY ═══════════ -->
+
+<section class="divider-slide">
+  <p style="color:#bbb; font-family:'Inter',sans-serif; font-size:0.5em; letter-spacing:0.1em; text-transform:uppercase;">The Backstory</p>
+  <h2>Security vs. speed vs. cost. Pick two.</h2>
+  <p>For sixty years, every solution to sharing computers safely solved one problem and created another.</p>
+</section>
+
+<section>
+  <span class="label">1960s &mdash; 2007</span>
+  <h2>First answer: give everyone their own machine. Virtually.</h2>
+  <p>A <a href="https://en.wikipedia.org/wiki/Hypervisor">hypervisor</a> virtualizes hardware so each tenant gets a full VM with its own OS kernel, memory isolated by the CPU itself. IBM invented this for mainframes in the 1960s. VMware commercialized it for x86 in 1999. <a href="https://www.linux-kvm.org/page/Main_Page">KVM</a> entered the Linux kernel in 2007. Every AWS EC2 instance runs this way.</p>
+  <p>VMs are <strong>secure</strong> &mdash; breaking out requires exploiting both the guest kernel and the hypervisor. But they're <strong>heavy</strong>. Each carries a full guest OS (~500 MB+), boots in 10&ndash;60 seconds, and duplicates system components. Ten apps means ten complete OS stacks. Too expensive for per-request isolation.</p>
+  <p>The industry wanted the security of VMs without the cost. So it made a trade.</p>
+</section>
+
+<section>
+  <span class="label">2013</span>
+  <h2>Second answer: share the kernel. What could go wrong?</h2>
+  <p><a href="https://www.docker.com/resources/what-container/">Docker</a>'s insight: processes can share the host kernel while each believing they're alone. Linux <a href="https://man7.org/linux/man-pages/man7/namespaces.7.html">namespaces</a> plus cgroups equal containers. No separate kernel, millisecond startup, 10&ndash;100x more density. Docker's packaging model &mdash; images, Dockerfiles, registries &mdash; became the universal deployment standard.</p>
+  <p>Security improved: seccomp defaults, user namespaces, rootless containers. But the fundamental architecture remained &mdash; all ~350 syscalls exposed to the shared host kernel. We traded hardware walls for a shared floor, and hoped the locks on the doors would hold.</p>
+  <p>They didn't.</p>
+</section>
+
+<section>
+  <span class="label">The Evidence</span>
+  <h2>The locks kept breaking.</h2>
+  <table>
+    <tr><th>CVE</th><th>Year</th><th>CVSS</th><th>What Happened</th></tr>
+    <tr><td><a href="https://nvd.nist.gov/vuln/detail/CVE-2019-5736">CVE-2019-5736</a></td><td>2019</td><td>8.6</td><td>runc flaw &rarr; overwrite host binary &rarr; root on host</td></tr>
+    <tr><td><a href="https://nvd.nist.gov/vuln/detail/CVE-2024-21626">CVE-2024-21626</a></td><td>2024</td><td>8.6</td><td>"Leaky Vessels" &mdash; fd leak &rarr; full host filesystem access</td></tr>
+    <tr><td><a href="https://nvd.nist.gov/vuln/detail/CVE-2025-31133">CVE-2025-31133</a>, <a href="https://nvd.nist.gov/vuln/detail/CVE-2025-52565">-52565</a>, <a href="https://nvd.nist.gov/vuln/detail/CVE-2025-52881">-52881</a></td><td>2025</td><td>7.5&ndash;7.8</td><td>Three mount-handling flaws bypassing AppArmor and SELinux</td></tr>
+  </table>
+  <p>Container escapes outnumber VM escapes roughly 10:1. Firecracker has <a href="https://github.com/firecracker-microvm/firecracker/security/advisories">zero known VM escape CVEs</a>. A <a href="https://dl.acm.org/doi/10.1145/3381052.3381315">UW-Madison study</a> found it exercises only 49,000 lines of host kernel code versus far more for containers.</p>
+  <p>The containers we relied on were built for a world where you trusted the code &mdash; because you wrote it. AI agents broke that assumption. Now we need VM-level security at container-level speed.</p>
+  <p class="bridge">But before building solutions, what exactly are we defending against? Agent threats aren't like anything traditional infrastructure was designed to handle.</p>
+</section>
+
+<!-- ═══════════ ACT 3: THE ADVERSARY ═══════════ -->
+
+<section class="divider-slide">
+  <p style="color:#bbb; font-family:'Inter',sans-serif; font-size:0.5em; letter-spacing:0.1em; text-transform:uppercase;">The Adversary</p>
+  <h2>Code execution is the feature, not the bug.</h2>
+  <p>Agents don't just run code &mdash; they reason about their environment.</p>
+</section>
+
+<section>
+  <span class="label">The Threat Model</span>
+  <h2>Five ways an agent can go wrong.</h2>
+  <table>
+    <tr><th></th><th>Vector</th><th>What It Looks Like</th></tr>
+    <tr><td>1</td><td><strong>Prompt injection &rarr; hostile code</strong></td><td><a href="https://nvd.nist.gov/vuln/detail/CVE-2025-53773">CVE-2025-53773</a>: command injection in GitHub Copilot. <a href="https://nvd.nist.gov/vuln/detail/CVE-2024-5565">CVE-2024-5565</a>: prompt injection executing arbitrary Python.</td></tr>
+    <tr><td>2</td><td><strong>Credential theft + network exfiltration</strong></td><td>Agent reads <code>~/.ssh</code>, <code>~/.aws</code>, <code>.env</code>. With network access, credentials leave in one HTTP request. <em>This is the #1 real-world risk &mdash; either alone is manageable; the combination is devastating.</em></td></tr>
+    <tr><td>3</td><td><strong>Data exfiltration</strong></td><td><a href="https://promptarmor.substack.com/p/data-exfiltration-from-slack-ai-via">Slack AI (Aug 2024)</a>: prompt injection caused AI to leak private conversations to an attacker.</td></tr>
+    <tr><td>4</td><td><strong>Supply chain / MCP poisoning</strong></td><td>Thousands of MCP servers since <a href="https://www.anthropic.com/news/model-context-protocol">Anthropic launched MCP</a>. A trusted tool can turn malicious after adoption.</td></tr>
+    <tr><td>5</td><td><strong>Confused deputy</strong></td><td><a href="https://owasp.org/www-project-top-10-for-large-language-model-applications/">OWASP top-10</a>. Agent uses legitimate tools in unintended ways &mdash; <code>git push</code> credentials to a public repo. The code is valid. The intent is subverted.</td></tr>
+  </table>
+</section>
+
+<section>
+  <span class="label">Network</span>
+  <h2>A sandbox without egress control is security theater.</h2>
+  <p>Threat #2 is the most dangerous because most agents <em>need</em> the network &mdash; to install packages, fetch documentation, call APIs. The question isn't whether to allow network access, but how to control it:</p>
+  <table>
+    <tr><th>Pattern</th><th>Mechanism</th><th>Used By</th></tr>
+    <tr><td><strong>No egress</strong></td><td>Empty network namespace &mdash; no interfaces at all</td><td>OpenAI Codex (cloud mode)</td></tr>
+    <tr><td><strong>Domain allowlist</strong></td><td>HTTP CONNECT proxy evaluating a whitelist</td><td><a href="https://code.claude.com/docs/en/sandboxing">Claude Code</a>, Docker AI Sandboxes</td></tr>
+    <tr><td><strong>DNS filtering</strong></td><td>Trusted resolvers only, drop CAP_NET_RAW</td><td>Supplementary layer</td></tr>
+  </table>
+  <p>The industry is converging on domain allowlists as the practical standard. And secrets should never enter the sandbox at all &mdash; <a href="https://deno.com/blog/introducing-deno-sandbox">Deno Sandbox</a> pioneered an approach where code sees only placeholders, with real values injected only at approved hosts.</p>
+  <p class="bridge">Now we know what we're defending against. What's been built to stop it?</p>
+</section>
+
+<!-- ═══════════ ACT 4: THE ARSENAL ═══════════ -->
+
+<section class="divider-slide">
+  <p style="color:#bbb; font-family:'Inter',sans-serif; font-size:0.5em; letter-spacing:0.1em; text-transform:uppercase;">The Arsenal</p>
+  <h2>VM-level security at container-level speed.</h2>
+  <p>The answer to the 60-year tradeoff.</p>
+</section>
+
+<section>
+  <span class="label">Firecracker</span>
+  <h2>Give each workload its own kernel. Boot it in 125ms.</h2>
+  <p>Written in Rust by AWS, <a href="https://www.usenix.org/conference/nsdi20/presentation/agache">open-sourced December 2018</a>. A single-process VMM using Linux KVM with radical minimalism: five emulated devices, ~50K lines of Rust versus QEMU's ~2M of C. The <a href="https://github.com/firecracker-microvm/firecracker/blob/main/docs/jailer.md">jailer</a> wraps every VM in six defense layers: chroot, cgroups, namespaces, seccomp-bpf, unprivileged UID, and network namespace. Even if an attacker escapes the VM, they face all of these.</p>
+  <div class="two-col">
+    <div>
+      <h3>Numbers</h3>
+      <p>125ms boot. &lt;5 MiB overhead. 150 VMs/sec. <a href="https://github.com/firecracker-microvm/firecracker/security/advisories">Zero known VM escape CVEs</a>. Powers Lambda + Fargate (trillions of requests/month). GPU/PCI is experimental (v1.15.0) &mdash; not production-ready for CUDA.</p>
+    </div>
+    <div>
+      <h3>Who builds on it</h3>
+      <p><strong><a href="https://e2b.dev/blog/series-a">E2B</a></strong> &mdash; the category creator. Hundreds of millions of sessions. <a href="https://e2b.dev/blog/how-manus-uses-e2b-to-provide-agents-with-virtual-computers">Manus runs 27 tools per agent</a> on E2B. <strong><a href="https://fly.io/blog/code-and-let-live/">Fly.io Sprites</a></strong> &mdash; persistent microVMs with 100GB NVMe. <strong><a href="https://github.com/zerobootdev/zeroboot">Zeroboot</a></strong> &mdash; 0.79ms spawn via CoW forking.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <span class="label">gVisor</span>
+  <h2>Rewrite Linux in Go. Let nothing reach the real kernel.</h2>
+  <p>Google's Sentry reimplements <a href="https://gvisor.dev/docs/user_guide/compatibility/linux/amd64/">274 of ~350 Linux syscalls</a> in memory-safe Go. No syscall passes directly to the host &mdash; the Sentry needs only ~68. A separate Gofer mediates filesystem I/O. <a href="https://gvisor.dev/blog/2023/06/20/gpu-pytorch-stable-diffusion/">nvproxy</a> enables CUDA on H100, A100, T4, and L4. Go eliminates buffer overflow and use-after-free by construction.</p>
+  <div class="two-col">
+    <div>
+      <h3>Tradeoffs</h3>
+      <p>CPU-bound: zero overhead. I/O-heavy: significant overhead for small operations. When CVE-2024-21626 escaped Docker, the <a href="https://cloud.google.com/anthos/clusters/docs/security-bulletins#gcp-2024-005-gke">GKE security bulletin</a> stated Sandbox clusters were <strong>"not impacted."</strong></p>
+    </div>
+    <div>
+      <h3>Who builds on it</h3>
+      <p><strong>Google</strong> &mdash; Cloud Run, Cloud Functions, GKE Sandbox, <a href="https://cloud.google.com/blog/products/containers-kubernetes/introducing-agent-sandbox">Agent Sandbox CRD</a>. <strong><a href="https://modal.com/docs/guide/security">Modal</a></strong> &mdash; custom runtime, <a href="https://modal.com/blog/announcing-our-series-b">$87M Series B</a> at $1.1B. GPU-first. Meta FAIR used it for Code World Model RL training.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <span class="label">The Full Picture</span>
+  <h2>The rest of the landscape.</h2>
+  <table>
+    <tr><th>Technology</th><th>Isolation</th><th>Boot</th><th>GPU</th><th>Used By</th></tr>
+    <tr><td>Firecracker</td><td>Hardware (KVM)</td><td>~125ms</td><td>Experimental</td><td>E2B, Fly.io, Lambda</td></tr>
+    <tr><td>gVisor</td><td>User-space kernel</td><td>Container-like</td><td>nvproxy</td><td>Modal, Google</td></tr>
+    <tr><td><a href="https://www.cloudhypervisor.org/">Cloud Hypervisor</a></td><td>Hardware (KVM)</td><td>&lt;100ms</td><td><a href="https://github.com/cloud-hypervisor/cloud-hypervisor/blob/main/docs/vfio.md">VFIO</a></td><td>Via Kata</td></tr>
+    <tr><td><a href="https://katacontainers.io/">Kata Containers</a></td><td>Hardware (multi-VMM)</td><td>VMM-dep.</td><td>Via QEMU</td><td>K8s Agent Sandbox</td></tr>
+    <tr><td><a href="https://wasmtime.dev/">Wasm</a></td><td>Linear memory</td><td>&lt;1ms</td><td>WASI-NN</td><td>Cloudflare, <a href="https://github.com/microsoft/wassette">Wassette</a></td></tr>
+    <tr><td><a href="https://github.com/containers/bubblewrap">Bubblewrap</a></td><td>Namespaces</td><td>~3.7ms</td><td>None</td><td>Claude Code</td></tr>
+  </table>
+  <p><a href="https://github.com/kata-containers/kata-containers/blob/main/src/runtime-rs/README.md">Kata 3.x</a> added runtime-rs (async Rust) and <a href="https://github.com/kata-containers/kata-containers/blob/main/docs/how-to/how-to-run-kata-containers-with-SNP-VMs.md">Confidential Containers</a> (SEV-SNP). Cloud Hypervisor adds PCI hotplug and NVIDIA GPU passthrough. Wasm is structurally sandboxed but lacks threads until WASI 0.3.</p>
+</section>
+
+<section>
+  <span class="label">The Model Providers</span>
+  <h2>How OpenAI and Anthropic layer their defenses.</h2>
+  <p>Neither uses a single technology. Both independently converged on the same pattern: stronger isolation for hosted, lighter layering for local.</p>
+  <div class="two-col">
+    <div>
+      <h3>OpenAI Codex</h3>
+      <p><strong>Cloud:</strong> sandboxed containers, network disabled by default.</p>
+      <p><strong>Local</strong> (<a href="https://github.com/openai/codex">open-source codex-rs</a>): Landlock + seccomp on Linux, Seatbelt on macOS. The only major agent with sandboxing on by default locally.</p>
+    </div>
+    <div>
+      <h3>Anthropic Claude Code</h3>
+      <p><strong>Local:</strong> Bubblewrap + socat proxy for domain allowlists. <a href="https://www.anthropic.com/engineering/claude-code-sandboxing">Reduced permission prompts by 84%</a>. <a href="https://github.com/anthropic-experimental/sandbox-runtime">Open-sourced</a>.</p>
+      <p><strong>Web:</strong> <a href="https://code.claude.com/docs/en/claude-code-on-the-web">"Each session runs in an isolated, Anthropic-managed VM."</a></p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <span class="label">New Entrants</span>
+  <h2>The wave behind them.</h2>
+  <table>
+    <tr><th>Platform</th><th>Key Metric</th><th>What's Different</th></tr>
+    <tr><td><a href="https://www.daytona.io/">Daytona</a> (Feb 2026)</td><td>Sub-90ms creation</td><td>$24M Series A. Pivoted from dev environments to agent infra</td></tr>
+    <tr><td><a href="https://morph.so/blog/infinibranch">Morph Cloud</a></td><td>Instant VM branching</td><td>Fork running VMs into parallel branches for RL research</td></tr>
+    <tr><td><a href="https://deno.com/blog/introducing-deno-sandbox">Deno Sandbox</a> (Feb 2026)</td><td>Zero secrets in sandbox</td><td>Code sees placeholders; real values injected at approved hosts</td></tr>
+    <tr><td><a href="https://github.com/microsoft/wassette">Microsoft Wassette</a></td><td>Per-tool isolation</td><td>Wasm Components + MCP for browser-grade tool sandboxing</td></tr>
+  </table>
+  <p>A broader convergence is underway: cloud dev environments are becoming agent sandboxes. <a href="https://ona.com/stories/gitpod-is-now-ona">Gitpod rebranded to Ona</a> (Sep 2025). <a href="https://codesandbox.io/blog">CodeSandbox was absorbed by Together AI</a> (Dec 2024). Same DNA &mdash; fast provisioning, filesystem isolation, dependency management &mdash; different interface.</p>
+</section>
+
+<section>
+  <span class="label">The Breakthrough</span>
+  <h2>Don't boot. Restore.</h2>
+  <p>This is the innovation that collapsed the sixty-year tradeoff. Instead of booting a fresh VM, platforms snapshot a fully-booted one with all dependencies, then restore using copy-on-write memory: pages are shared until written, so forking costs only memory for pages that actually change.</p>
+  <table>
+    <tr><th>Platform</th><th>Restore Time</th><th>How</th></tr>
+    <tr><td>Together AI</td><td>500ms</td><td>VM snapshot (acquired CodeSandbox)</td></tr>
+    <tr><td>Fly.io Sprites</td><td>~300ms</td><td>Firecracker checkpoint/restore</td></tr>
+    <tr><td>E2B</td><td>~150ms</td><td>Firecracker microVM snapshots</td></tr>
+    <tr><td>ForgeVM</td><td>28ms</td><td>Optimized Firecracker restore</td></tr>
+    <tr><td>Zeroboot</td><td><strong>0.79ms</strong></td><td>CoW forking at ~265KB per sandbox</td></tr>
+  </table>
+  <p>Security vs. speed? 0.79 milliseconds. Both. Anthropic showed this compounds: sandboxed execution with on-demand MCP tool imports <a href="https://www.anthropic.com/engineering/code-execution-with-mcp">reduces context tokens by 98.7%</a> (150K &rarr; 2K).</p>
+  <p class="bridge">We have the tools. How do you put them together?</p>
+</section>
+
+<!-- ═══════════ ACT 5: THE PLAYBOOK ═══════════ -->
+
+<section class="divider-slide">
+  <p style="color:#bbb; font-family:'Inter',sans-serif; font-size:0.5em; letter-spacing:0.1em; text-transform:uppercase;">The Playbook</p>
+  <h2>Putting it all together.</h2>
+  <p>Layered defenses, strategic choices, and what to use today.</p>
+</section>
+
+<section>
+  <span class="label">Architecture</span>
+  <h2>The defense stack, mapped to the threats.</h2>
+  <table>
+    <tr><th>Layer</th><th>What</th><th>Which Threat (from Act 3)</th></tr>
+    <tr><td>5. Operational</td><td>Ephemeral environments, credential isolation, audit logging</td><td>Persistence, credential exposure (#2)</td></tr>
+    <tr><td>4. Network</td><td>Default-deny egress + domain-allowlisted proxy + DNS filtering</td><td>Exfiltration (#3), C2, credential theft (#2)</td></tr>
+    <tr><td>3. Application</td><td>Tool allowlists, output validation, rate limits</td><td>Confused deputy (#5), MCP poisoning (#4)</td></tr>
+    <tr><td>2. Syscall reduction</td><td>gVisor Sentry (68 syscalls), seccomp-bpf, Landlock</td><td>Kernel exploits, prompt-injected code (#1)</td></tr>
+    <tr><td>1. Hardware isolation</td><td>Firecracker / Kata / KVM &mdash; dedicated kernel</td><td>Everything short of hypervisor escape</td></tr>
+  </table>
+  <p>Firecracker's <a href="https://github.com/firecracker-microvm/firecracker/blob/main/docs/jailer.md">jailer</a> combines all five: KVM &rarr; chroot &rarr; namespaces &rarr; cgroups &rarr; seccomp &rarr; privilege drop. OpenAI and Anthropic independently converged on this layered pattern &mdash; stronger for hosted, lighter for local.</p>
+</section>
+
+<section>
+  <span class="label">The Strategic Choice</span>
+  <h2>Ephemeral, persistent, or both?</h2>
+  <div class="three-col">
+    <div>
+      <h3>Ephemeral</h3>
+      <p><em>"Destroy after every task."</em></p>
+      <p>E2B, Zeroboot, Vercel. No persistence means no footholds and no state leakage.</p>
+    </div>
+    <div>
+      <h3>Snapshot + Resume</h3>
+      <p><em>"Destroy, but pick up where you left off."</em></p>
+      <p>E2B pause/resume, <a href="https://morph.so/blog/infinibranch">Morph Cloud</a> branching, K8s Pod Snapshots. The emerging middle ground.</p>
+    </div>
+    <div>
+      <h3>Persistent</h3>
+      <p><em>"It wants a computer."</em></p>
+      <p><a href="https://fly.io/blog/code-and-let-live/">Fly.io Sprites</a> (100GB NVMe), Daytona. Context continuity for long-running tasks.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <span class="label">Looking Ahead</span>
+  <h2>Three trends shaping what comes next.</h2>
+  <div class="two-col">
+    <div>
+      <p><strong>Kubernetes Agent Sandbox.</strong> <a href="https://cloud.google.com/blog/products/containers-kubernetes/introducing-agent-sandbox">Google announced</a> a K8s SIG Apps subproject with CRDs for warm pools, templates, and claims. Uses gVisor. Sub-second creation. The enterprise standardization play.</p>
+      <p><strong>Confidential computing.</strong> Intel TDX and AMD SEV-SNP encrypt VM memory so even the hypervisor can't read it. <a href="https://github.com/kata-containers/kata-containers/blob/main/docs/how-to/how-to-run-kata-containers-with-SNP-VMs.md">Kata 3.x already supports SEV-SNP</a>.</p>
+    </div>
+    <div>
+      <p><strong>Framework integration.</strong> Agent frameworks (LangChain, CrewAI, AutoGen) are integrating sandbox SDKs. The bottleneck isn't sandbox technology &mdash; it's the developer experience of connecting a framework to a sandbox. Whoever wins "default integration" wins the market.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <span class="label">Guidance</span>
+  <h2>What to use today.</h2>
+  <table>
+    <tr><th>Scenario</th><th>Stack</th><th>Why</th></tr>
+    <tr><td>Hosted multi-tenant, no GPU</td><td>Firecracker (E2B, or self-host)</td><td>Strongest isolation, smallest surface</td></tr>
+    <tr><td>Hosted with GPU</td><td>gVisor nvproxy (Modal) or CH VFIO via Kata</td><td>Only options combining isolation with CUDA</td></tr>
+    <tr><td>Local coding agent</td><td>Landlock + seccomp + net namespace</td><td>Lighter approaches work single-user</td></tr>
+    <tr><td>Own Kubernetes infra</td><td>Kata or Google Agent Sandbox CRD</td><td>VM isolation, K8s-native</td></tr>
+    <tr><td>Individual tool calls</td><td>WebAssembly (Wasmtime)</td><td>Sub-millisecond, capability-based</td></tr>
+  </table>
+  <p><strong>In all cases:</strong> default-deny network egress. Domain-allowlisted proxy. Ephemeral environments when possible. Secrets never in the sandbox.</p>
+</section>
+
+<section>
+  <h2>Three things to remember.</h2>
+  <p><strong>Match isolation to your threat model.</strong> Hardware VMs or user-space kernels are the minimum for multi-tenant hosted agents. Five runc CVEs in 2024&ndash;2025 validate this. For local agents, Landlock + seccomp works &mdash; as OpenAI and Anthropic both demonstrate.</p>
+  <hr>
+  <p><strong>Snapshot/restore broke the old tradeoff.</strong> From 500ms to 0.79ms. Security vs. speed is no longer a choice. This is the defining innovation.</p>
+  <hr>
+  <p><strong>Network isolation matters as much as compute isolation.</strong> A sandbox without egress control is security theater. Credential theft plus network access is the #1 real-world risk for coding agents.</p>
+</section>
+
+<section>
+  <span class="label">Go Deeper</span>
+  <h2>Primary sources worth reading.</h2>
+  <div class="two-col">
+    <div>
+      <h3>Foundations</h3>
+      <ul>
+        <li><a href="https://www.usenix.org/conference/nsdi20/presentation/agache">Firecracker NSDI '20 paper</a> &mdash; the design behind AWS Lambda's isolation</li>
+        <li><a href="https://gvisor.dev/docs/architecture_guide/">gVisor architecture guide</a> &mdash; how Google reimplemented Linux in Go</li>
+        <li><a href="https://dl.acm.org/doi/10.1145/3381052.3381315">Blending Containers and VMs</a> &mdash; UW-Madison's comparison of Firecracker vs. gVisor</li>
+      </ul>
+      <h3>Security</h3>
+      <ul>
+        <li><a href="https://snyk.io/blog/leaky-vessels-docker-runc-container-breakout-vulnerabilities/">Leaky Vessels disclosure</a> &mdash; Snyk's writeup of CVE-2024-21626</li>
+        <li><a href="https://owasp.org/www-project-top-10-for-large-language-model-applications/">OWASP Top 10 for LLM Applications</a></li>
+        <li><a href="https://promptarmor.substack.com/p/data-exfiltration-from-slack-ai-via">Slack AI data exfiltration</a> &mdash; PromptArmor's August 2024 disclosure</li>
+      </ul>
+    </div>
+    <div>
+      <h3>How Companies Do It</h3>
+      <ul>
+        <li><a href="https://www.anthropic.com/engineering/claude-code-sandboxing">Claude Code sandboxing</a> &mdash; Anthropic's engineering blog on reducing permission prompts by 84%</li>
+        <li><a href="https://www.anthropic.com/engineering/code-execution-with-mcp">Code execution with MCP</a> &mdash; 98.7% context token reduction</li>
+        <li><a href="https://github.com/openai/codex">OpenAI Codex</a> &mdash; open-source Rust implementation with Landlock + seccomp</li>
+        <li><a href="https://modal.com/docs/guide/security">Modal security docs</a> &mdash; gVisor in production at scale</li>
+      </ul>
+      <h3>The New Wave</h3>
+      <ul>
+        <li><a href="https://fly.io/blog/code-and-let-live/">Fly.io Sprites</a> &middot; <a href="https://deno.com/blog/introducing-deno-sandbox">Deno Sandbox</a> &middot; <a href="https://morph.so/blog/infinibranch">Morph Infinibranch</a> &middot; <a href="https://github.com/zerobootdev/zeroboot">Zeroboot</a></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.esm.js" type="module"></script>
+<script type="module">
+import Reveal from 'https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.esm.js';
+Reveal.initialize({
+  hash: true,
+  slideNumber: 'c/t',
+  width: 1120,
+  height: 700,
+  margin: 0.1,
+  transition: 'fade',
+  transitionSpeed: 'slow',
+  center: true,
+  progress: true,
+  history: true,
+});
+</script>
+</body>
+</html>
