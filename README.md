@@ -2,7 +2,7 @@
 
 **How the Industry Runs Untrusted AI Code Safely**
 
-A technical deep dive into microVMs, gVisor, Firecracker, and the infrastructure behind AI agents that write and execute code. Covering isolation technologies, real-world architectures from E2B, Modal, OpenAI, and Anthropic, and the security models that underpin them.
+A technical deep dive into microVMs, gVisor, Firecracker, and the infrastructure behind AI agents that write and execute code. Today's agents — Claude Code, OpenAI Codex, and others — use code execution, CLI commands, and filesystem access as their primary harness, making every action potentially untrusted. Covering isolation technologies, real-world architectures from E2B, Modal, OpenAI, Anthropic, and AWS AgentCore, and the security models that underpin them.
 
 ## Research Links
 
@@ -43,6 +43,19 @@ A technical deep dive into microVMs, gVisor, Firecracker, and the infrastructure
 - [Wasmtime](https://wasmtime.dev/)
 - [Bubblewrap](https://github.com/containers/bubblewrap)
 
+### The Agent Harness Shift: Code + CLI + Filesystem
+
+All major AI agents have converged on the same pattern: code execution, CLI commands, and filesystem access are now the primary interface — not chat. Tools like Claude Code, OpenAI Codex, and LangChain's Deep Agents use a handful of tools (shell, file read/write, code execution) rather than hundreds of specialized APIs. This "harness" — the scaffolding of system prompts, tool definitions, and orchestration logic around the model — is what turns an LLM into a coding agent.
+
+- [Deep Agents: The Harness Behind Claude Code, Codex, Manus, and OpenClaw (Agent Native)](https://agentnativedev.medium.com/deep-agents-the-harness-behind-claude-code-codex-manus-and-openclaw-bdd94688dfdb) — how code execution + CLI + filesystem became the universal agent interface
+- [Using Skills with Deep Agents (LangChain)](https://blog.langchain.com/using-skills-with-deep-agents/) — LangChain's open-source harness: "give agents a computer, not more tools"
+- [Unlocking the Codex Harness: How We Built the App Server (OpenAI)](https://openai.com/index/unlocking-the-codex-harness/) — Codex's unified harness across web, CLI, IDE, and macOS
+- [OpenAI Codex CLI vs Claude Code: A Practical Harness Comparison (Field Journal)](https://fieldjournal.ai/blog/codex-cli-vs-claude-code/) — side-by-side comparison of how both agents use shell, filesystem, and code execution
+- [Codex vs Claude Code vs OpenCode: Three Terminal Coding Agents, Compared (Awesome Agents)](https://awesomeagents.ai/tools/codex-vs-claude-code-vs-opencode/) — the three dominant terminal-first agents
+- [Claude Code & Codex CLI: AI Agents Beyond Coding (iTecs)](https://itecsonline.com/post/claude-code-codex-cli-ai-agents-beyond-coding-2026) — how CLI agents moved from coding tools to general-purpose work
+- [MCPs, Claude Code, Codex, and the 2026 Workflow Shift (DEV Community)](https://dev.to/austinwdigital/mcps-claude-code-codex-moltbot-clawdbot-and-the-2026-workflow-shift-in-ai-development-1o04) — the shift from "AI writes code" to "AI runs work"
+- [Coding Agent Sandbox: Secure Environments for AI-Generated Code (Bunnyshell)](https://www.bunnyshell.com/guides/coding-agent-sandbox/) — survey of sandboxing approaches across major coding agents
+
 ### Model Provider Implementations
 
 - [Claude Code Sandboxing (Anthropic)](https://www.anthropic.com/engineering/claude-code-sandboxing) — reduced permission prompts by 84%
@@ -54,6 +67,30 @@ A technical deep dive into microVMs, gVisor, Firecracker, and the infrastructure
 - [OpenAI Codex (open-source)](https://github.com/openai/codex) — Rust implementation with Landlock + seccomp
 - [Modal Security Docs](https://modal.com/docs/guide/security) — gVisor in production at scale
 - [Google Agent Sandbox CRD](https://cloud.google.com/blog/products/containers-kubernetes/introducing-agent-sandbox)
+
+### AWS Bedrock AgentCore Runtime
+
+Amazon Bedrock AgentCore provides a serverless, framework-agnostic platform for deploying AI agents with built-in Firecracker microVM isolation. Each user session runs in a dedicated microVM with isolated CPU, memory, and filesystem — terminated and sanitized after completion. Supports sessions up to 8 hours, MCP and A2A protocols, and works with LangGraph, Strands, and CrewAI. However, security researchers have found significant sandbox bypass vectors including DNS-based C2 channels and credential exfiltration via the microVM metadata service.
+
+- [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/) — product page
+- [AgentCore Runtime: How It Works](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-how-it-works.html) — architecture and microVM provisioning
+- [AgentCore Runtime Session Isolation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-sessions.html) — one-session-one-microVM model
+- [AgentCore Tools Session Isolation (Firecracker)](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/built-in-tools-how-it-works.html) — Firecracker-based isolation for Code Interpreter and Browser Tool
+- [Host Agents or Tools with AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agents-tools-runtime.html) — deploying agents with session management and scaling
+- [AgentCore Runtime Lifecycle Settings](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-lifecycle-settings.html) — idle timeout, max lifetime, health checks
+- [Introducing the AgentCore Code Interpreter (AWS Blog)](https://aws.amazon.com/blogs/machine-learning/introducing-the-amazon-bedrock-agentcore-code-interpreter/) — fully managed sandboxed code execution (Python, JS, TS)
+- [Amazon Bedrock AgentCore Samples (GitHub)](https://github.com/awslabs/amazon-bedrock-agentcore-samples) — official sample code
+- [Building AI Agents on AWS in 2025: Bedrock, AgentCore, and Beyond (DEV Community)](https://dev.to/aws-builders/building-ai-agents-on-aws-in-2025-a-practitioners-guide-to-bedrock-agentcore-and-beyond-4efn) — practitioner's guide
+- [AWS Bedrock AgentCore Deep Dive (Medium)](https://joudwawad.medium.com/aws-bedrock-agentcore-deep-dive-6822e4071774) — architecture walkthrough
+- [AgentCore Runtime Part 1: Introduction (DEV Community)](https://dev.to/aws-heroes/amazon-bedrock-agentcore-runtime-part-1-introduction-e5i) — getting started guide
+
+#### AgentCore Security Research
+
+- [Sandboxed to Compromised: Credential Exfiltration Paths in AWS Code Interpreters (Sonrai Security)](https://sonraisecurity.com/blog/sandboxed-to-compromised-new-research-exposes-credential-exfiltration-paths-in-aws-code-interpreters/) — MMDS metadata bypass enabling credential exfiltration from sandboxed code interpreters
+- [AgentCore: The Overlooked Privilege Escalation Path (Sonrai Security)](https://sonraisecurity.com/blog/aws-agentcore-privilege-escalation-bedrock-scp-fix/) — non-agentic identities invoking code interpreters to assume execution roles
+- [Pwning AI Code Interpreters in AWS Bedrock AgentCore (BeyondTrust)](https://www.beyondtrust.com/blog/entry/pwning-aws-agentcore-code-interpreter) — DNS sandbox bypass enabling bidirectional C2 channels (CVSSv3 7.5)
+- [AWS Bedrock AgentCore Sandbox Bypass: Covert C2 and Data Exfiltration (CybersecurityNews)](https://cybersecuritynews.com/aws-bedrock-agentcore-sandbox-bypass/) — DNS A/AAAA record exfiltration despite "complete isolation" claim
+- [AWS Privilege Escalation: IAM Risks and AI-Driven Bedrock/AgentCore Vectors (Software Secured)](https://www.softwaresecured.com/post/aws-privilege-escalation-iam-risks-service-based-attacks-and-new-ai-driven-bedrock-agentcore-vectors) — new escalation class: AI-managed compute executing code on behalf of privileged service roles
 
 ### New Entrants & Emerging Platforms
 

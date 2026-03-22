@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sandboxed Agents: How the Industry Runs Untrusted AI Code Safely</title>
-<meta name="description" content="A technical deep dive into microVMs, gVisor, Firecracker, and the infrastructure behind AI agents that write and execute code. Covering isolation technologies, real-world architectures from E2B, Modal, OpenAI, and Anthropic, and the security models that underpin them.">
+<meta name="description" content="A technical deep dive into microVMs, gVisor, Firecracker, and the infrastructure behind AI agents that write and execute code. Today's agents — Claude Code, OpenAI Codex, and others — use code execution, CLI commands, and filesystem access as their primary harness. Covering isolation technologies, real-world architectures from E2B, Modal, OpenAI, Anthropic, and AWS AgentCore, and the security models that underpin them.">
 
 <!-- Open Graph / LinkedIn -->
 <meta property="og:type" content="article">
@@ -167,6 +167,23 @@
 </section>
 
 <section>
+  <span class="label">The Harness</span>
+  <h2>Every agent is now code + CLI + filesystem.</h2>
+  <p>The biggest shift: agents don't just generate code &mdash; they <strong>run it</strong>. Claude Code, OpenAI Codex, Manus, and LangChain's <a href="https://blog.langchain.com/using-skills-with-deep-agents/">Deep Agents</a> all converged on the same architecture: a handful of tools (shell execution, file read/write, code interpreter) wrapped in a "<a href="https://openai.com/index/unlocking-the-codex-harness/">harness</a>" &mdash; the scaffolding of system prompts, tool definitions, and orchestration that turns an LLM into an agent.</p>
+  <div class="two-col">
+    <div>
+      <h3>The pattern</h3>
+      <p>Claude Code uses ~12 tools. Manus uses &lt;20. LangChain's insight: <em>"Give agents a computer, not more tools."</em> Offload actions to the filesystem &mdash; scripts and instructions replace specialized APIs.</p>
+      <p>The model matters, but the <strong>harness matters more</strong> &mdash; how it reads code, runs commands, handles secrets, and confirms actions determines whether you can trust it on a real codebase.</p>
+    </div>
+    <div>
+      <h3>Why this changes the threat model</h3>
+      <p>When code execution + CLI + filesystem is the interface, <strong>every agent action is an untrusted shell command</strong>. A user running <code>rm -rf ~/</code> is bad. An agent running it is catastrophic &mdash; and it has happened. The observe-plan-act-iterate loop that makes agents powerful is also what makes them dangerous.</p>
+    </div>
+  </div>
+</section>
+
+<section>
   <span class="label">The Threat Model</span>
   <h2>Five ways an agent can go wrong.</h2>
   <table>
@@ -244,6 +261,7 @@
     <tr><td><a href="https://katacontainers.io/">Kata Containers</a></td><td>Hardware (multi-VMM)</td><td>VMM-dep.</td><td>Via QEMU</td><td>K8s Agent Sandbox</td></tr>
     <tr><td><a href="https://wasmtime.dev/">Wasm</a></td><td>Linear memory</td><td>&lt;1ms</td><td>WASI-NN</td><td>Cloudflare, <a href="https://github.com/microsoft/wassette">Wassette</a></td></tr>
     <tr><td><a href="https://github.com/containers/bubblewrap">Bubblewrap</a></td><td>Namespaces</td><td>~3.7ms</td><td>None</td><td>Claude Code</td></tr>
+    <tr><td><a href="https://aws.amazon.com/bedrock/agentcore/">AgentCore Runtime</a></td><td>Hardware (Firecracker)</td><td>Serverless</td><td>N/A</td><td>AWS Bedrock</td></tr>
   </table>
   <p><a href="https://github.com/kata-containers/kata-containers/blob/main/src/runtime-rs/README.md">Kata 3.x</a> added runtime-rs (async Rust) and <a href="https://github.com/kata-containers/kata-containers/blob/main/docs/how-to/how-to-run-kata-containers-with-SNP-VMs.md">Confidential Containers</a> (SEV-SNP). Cloud Hypervisor adds PCI hotplug and NVIDIA GPU passthrough. Wasm is structurally sandboxed but lacks threads until WASI 0.3.</p>
 </section>
@@ -262,6 +280,25 @@
       <h3>Anthropic Claude Code</h3>
       <p><strong>Local:</strong> Bubblewrap + socat proxy for domain allowlists. <a href="https://www.anthropic.com/engineering/claude-code-sandboxing">Reduced permission prompts by 84%</a>. <a href="https://github.com/anthropic-experimental/sandbox-runtime">Open-sourced</a>.</p>
       <p><strong>Web:</strong> <a href="https://code.claude.com/docs/en/claude-code-on-the-web">"Each session runs in an isolated, Anthropic-managed VM."</a></p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <span class="label">AWS AgentCore</span>
+  <h2>AWS enters: Firecracker microVMs for every agent session.</h2>
+  <p><a href="https://aws.amazon.com/bedrock/agentcore/">Amazon Bedrock AgentCore Runtime</a> &mdash; serverless, framework-agnostic hosting for AI agents. Each user session runs in a <a href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/built-in-tools-how-it-works.html">dedicated Firecracker microVM</a> with isolated CPU, memory, and filesystem. Supports sessions up to 8 hours, MCP and A2A protocols, and works with LangGraph, Strands, and CrewAI.</p>
+  <div class="two-col">
+    <div>
+      <h3>Built-in sandboxed tools</h3>
+      <p><strong>Code Interpreter</strong> &mdash; sandboxed execution of Python, JS, and TS with automatic error handling.</p>
+      <p><strong>Browser Tool</strong> &mdash; headless browsing in a sandboxed environment for web-based agent tasks.</p>
+      <p>Both run in <a href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-sessions.html">isolated microVMs</a>, terminated and memory-sanitized after session completion.</p>
+    </div>
+    <div>
+      <h3>But: sandbox bypasses found</h3>
+      <p><a href="https://sonraisecurity.com/blog/sandboxed-to-compromised-new-research-exposes-credential-exfiltration-paths-in-aws-code-interpreters/">Sonrai Security</a>: credential exfiltration via microVM metadata service bypass. S3 operations work even in "Sandbox" mode.</p>
+      <p><a href="https://www.beyondtrust.com/blog/entry/pwning-aws-agentcore-code-interpreter">BeyondTrust</a>: DNS queries egress freely despite "complete isolation" &mdash; enabling bidirectional C2 channels (CVSSv3 7.5). AWS chose not to fix it, updating docs instead.</p>
     </div>
   </div>
 </section>
@@ -397,14 +434,15 @@
     <div>
       <h3>How Companies Do It</h3>
       <ul>
-        <li><a href="https://www.anthropic.com/engineering/claude-code-sandboxing">Claude Code sandboxing</a> &mdash; Anthropic's engineering blog on reducing permission prompts by 84%</li>
-        <li><a href="https://www.anthropic.com/engineering/code-execution-with-mcp">Code execution with MCP</a> &mdash; 98.7% context token reduction</li>
-        <li><a href="https://github.com/openai/codex">OpenAI Codex</a> &mdash; open-source Rust implementation with Landlock + seccomp</li>
+        <li><a href="https://www.anthropic.com/engineering/claude-code-sandboxing">Claude Code sandboxing</a> &mdash; reducing permission prompts by 84%</li>
+        <li><a href="https://openai.com/index/unlocking-the-codex-harness/">Unlocking the Codex harness</a> &mdash; OpenAI's unified agent loop across surfaces</li>
+        <li><a href="https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/built-in-tools-how-it-works.html">AWS AgentCore session isolation</a> &mdash; Firecracker microVMs for every agent session</li>
         <li><a href="https://modal.com/docs/guide/security">Modal security docs</a> &mdash; gVisor in production at scale</li>
       </ul>
-      <h3>The New Wave</h3>
+      <h3>The New Wave &amp; Agent Harness</h3>
       <ul>
-        <li><a href="https://fly.io/blog/code-and-let-live/">Fly.io Sprites</a> &middot; <a href="https://deno.com/blog/introducing-deno-sandbox">Deno Sandbox</a> &middot; <a href="https://morph.so/blog/infinibranch">Morph Infinibranch</a> &middot; <a href="https://github.com/zerobootdev/zeroboot">Zeroboot</a></li>
+        <li><a href="https://blog.langchain.com/using-skills-with-deep-agents/">Deep Agents (LangChain)</a> &middot; <a href="https://fly.io/blog/code-and-let-live/">Fly.io Sprites</a> &middot; <a href="https://deno.com/blog/introducing-deno-sandbox">Deno Sandbox</a> &middot; <a href="https://github.com/zerobootdev/zeroboot">Zeroboot</a></li>
+        <li><a href="https://sonraisecurity.com/blog/sandboxed-to-compromised-new-research-exposes-credential-exfiltration-paths-in-aws-code-interpreters/">AgentCore credential exfiltration</a> &middot; <a href="https://www.beyondtrust.com/blog/entry/pwning-aws-agentcore-code-interpreter">AgentCore DNS bypass</a></li>
       </ul>
     </div>
   </div>
